@@ -1,0 +1,108 @@
+blueprint:
+  name: "Bambu Lab - Notify on Print Error"
+  source_url: "https://raw.githubusercontent.com/0rax/ha-bbla1-blueprints/refs/heads/main/automations/bambu_lab_notify_print_error.yaml"
+  author: "0rax"
+  description: "Based on [WolfwithSword's NodeRed Bambu Lab Print Error Blueprint](https://github.com/WolfwithSword/Bambu-HomeAssistant-Flows/blob/main/files/homeassistant/blueprints/nodered/bambu_nr_notify_print_error.yaml) adapted for the [Bambu Lab integration](https://github.com/greghesp/ha-bambulab)"
+  domain: automation
+  input:
+    printer:
+      name: Printer
+      selector:
+        device:
+          filter:
+            - integration: bambu_lab
+    image:
+      name: "Optional: Image or Camera Snapshot Entity"
+      default: ""
+      description: "An Image or Camera Entity to send a preview with to mobile-app. Leave empty if you do not want to use this."
+      selector:
+        entity:
+          filter:
+            - domain: camera
+            - domain: image
+    notify_ha_persist:
+      name: Home Assistant Persistent Notification
+      description: Send notification to the Home Assistant Notification Center
+      default: false
+      selector:
+        boolean:
+    notify_devices_mobile:
+      name: Mobile Notify Devices
+      description: "Mobile devices to push notifications to (using the Companion App integration)."
+      default: []
+      selector:
+        device:
+          multiple: true
+          filter:
+            - integration: mobile_app
+    custom_actions:
+      name: Custom Actions
+      description: "Custom Actions to run. Please provide proper structure, devices, and service data as applicable."
+      default: []
+      selector:
+        action: {}
+    ignored_codes:
+      name: Ignored Codes
+      description: |
+        List of top-level error codes to ignore sending notifications for.
+        See [Here](https://e.bambulab.com/query.php?lang=en) for more information. Only look under "device_error", not "device_hms".
+        By default, "12FF8007" and "7FF8007" are ignored. These map to the popup that occurs when manually loading filament to "retry" or hit "done".
+      default: ["12FF8007", "7FF8007", "7FFC003", "7FFC006"]
+      selector:
+        text:
+          multiple: true
+
+triggers:
+  - device_id: !input printer
+    domain: bambu_lab
+    type: event_print_error
+    trigger: device
+
+variables:
+  device_printer: !input printer
+  print_error: |
+    {{ device_entities(device_printer) | select('search', 'sensor\..*_print_error') | list | first }}
+  print_image: !input image
+  ignored_codes: !input ignored_codes
+
+conditions:
+  - condition: and
+    conditions:
+      - condition: template
+        value_template: "{{ states(print_error) == 'on' }}"
+      - condition: template
+        value_template: "{{ state_attr(print_error, 'code') | upper not in ignored_codes }}"
+
+actions:
+  - alias: "Run custom actions"
+    choose: []
+    default: !input custom_actions
+  - alias: "Send notification to mobile devices"
+    repeat:
+      for_each: !input notify_devices_mobile
+      sequence:
+        - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+          data:
+            title: >-
+              {{ device_attr(device_printer, 'name_by_user') }} - Print Error Detected
+            message: >-
+              {{ state_attr(print_error, 'error') }} ({{ state_attr(print_error, 'code') }})
+            data:
+              notification_icon: "mdi:printer-3d-nozzle-alert"
+              color: "#EF5350"
+              image: >-
+                {% if print_image %}
+                  /api/{{states[print_image].domain}}_proxy/{{print_image}}
+                {% endif %}
+              group: "{{ device_attr(device_printer, 'name_by_user') }}"
+  - alias: "Send notification to HA Notif Center"
+    if:
+      - condition: template
+        value_template: !input notify_ha_persist
+    then:
+      action: "notify.persistent_notification"
+      data:
+        title: >-
+          {{ device_attr(device_printer, 'name_by_user') }} - Print Error Detected
+        message: >-
+          {{ state_attr(print_error, 'error') }} ({{ state_attr(print_error, 'code') }})

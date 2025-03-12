@@ -1,0 +1,127 @@
+blueprint:
+  name: "Bambu Lab - Notify on Print Ending"
+  source_url: "https://raw.githubusercontent.com/0rax/ha-bbla1-blueprints/refs/heads/main/automations/bambu_lab_notify_print_state.yaml"
+  author: "0rax"
+  description: "Based on [WolfwithSword's NodeRed Bambu Lab Print State Blueprint](https://github.com/WolfwithSword/Bambu-HomeAssistant-Flows/blob/main/files/homeassistant/blueprints/nodered/bambu_nr_notify_print_state.yaml) adapted for the [Bambu Lab integration](https://github.com/greghesp/ha-bambulab)"
+  domain: automation
+  input:
+    printer:
+      name: Printer
+      selector:
+        device:
+          filter:
+            - integration: bambu_lab
+    image:
+      name: "Optional: Image or Camera Snapshot Entity"
+      default: ""
+      description: "An Image or Camera Entity to send a preview with to mobile-app. Leave empty if you do not want to use this."
+      selector:
+        entity:
+          filter:
+            - domain: camera
+            - domain: image
+    notify_ha_persist:
+      name: Home Assistant Persistent Notification
+      description: Send notification to the Home Assistant Notification Center
+      default: false
+      selector:
+        boolean:
+    notify_devices_mobile:
+      name: Mobile Notify Devices
+      description: "Mobile devices to push notifications to (using the Companion App integration)."
+      default: []
+      selector:
+        device:
+          multiple: true
+          filter:
+            - integration: mobile_app
+    custom_actions:
+      name: Custom Actions
+      description: "Custom Actions to run. Please provide proper structure, devices, and service data as applicable."
+      default: []
+      selector:
+        action: {}
+
+triggers:
+  - device_id: !input printer
+    domain: bambu_lab
+    type: event_print_failed
+    trigger: device
+  - device_id: !input printer
+    domain: bambu_lab
+    type: event_print_finished
+    trigger: device
+  - device_id: !input printer
+    domain: bambu_lab
+    type: event_print_canceled
+    trigger: device
+
+variables:
+  device_printer: !input printer
+  print_status: |
+    {{ device_entities(device_printer) | select('search', 'sensor\..*_print_status') | list | first }}
+  print_task: |
+    {{ device_entities(device_printer) | select('search', 'sensor\..*_task_name') | list | first }}
+  print_start: |
+    {{ device_entities(device_printer) | select('search', 'sensor\..*_start_time') | list | first }}
+  print_end: |
+    {{ device_entities(device_printer) | select('search', 'sensor\..*_end_time') | list | first }}
+  print_image: !input image
+
+actions:
+  - alias: "Run custom actions"
+    choose: []
+    default: !input custom_actions
+  - alias: "Send notification to mobile devices"
+    repeat:
+      for_each: !input notify_devices_mobile
+      sequence:
+        - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+          data:
+            title: >-
+              {{ device_attr(device_printer, 'name_by_user') }} - {% if trigger.platform == 'event' and trigger.event.event_type == "bambu_lab.event_print_failed" -%}
+                Print Failed
+              {%- elif trigger.platform == 'event' and trigger.event.event_type == "bambu_lab.event_print_canceled" -%}
+                Print Canceled
+              {%- else -%}
+                Print Success
+              {%- endif -%}
+            message: >-
+              {{ states(print_task) }}{%- if not is_state(print_end, "unavailable") %} ({{ ((states(print_end) - states(print_start)).seconds / 3600) | round }}h{{ ((states(print_end) - states(print_start)) / 60) | int % 60 }}m){% endif %}
+            data:
+              notification_icon: >-
+                {% if trigger.platform == 'event' and (trigger.event.event_type == "bambu_lab.event_print_failed" or trigger.event.event_type == "bambu_lab.event_print_canceled") %}
+                  mdi:printer-3d-nozzle-alert
+                {% else %}
+                  mdi:printer-3d-nozzle
+                {% endif %}
+              color: >-
+                {% if trigger.platform == 'event' and trigger.event.event_type == "bambu_lab.event_print_failed" %}
+                  #EF5350
+                {% elif trigger.platform == 'event' and trigger.event.event_type == "bambu_lab.event_print_canceled" %}
+                  #FFA726
+                {% else %}
+                  #66BB6A
+                {% endif %}
+              image: >-
+                {% if print_image %}
+                  /api/{{states[print_image].domain}}_proxy/{{print_image}}
+                {% endif %}
+              group: "{{ device_attr(device_printer, 'name_by_user') }}"
+  - alias: "Send notification to HA Notif Center"
+    if:
+      - condition: template
+        value_template: !input notify_ha_persist
+    then:
+      action: "notify.persistent_notification"
+      data:
+        title: >-
+          {{ device_attr(device_printer, 'name_by_user') }} - {% if trigger.platform == 'event' and trigger.event.event_type == "bambu_lab.event_print_failed" -%}
+            Print Failed
+          {%- elif trigger.platform == 'event' and trigger.event.event_type == "bambu_lab.event_print_canceled" -%}
+            Print Canceled
+          {%- else -%}
+            Print Success
+          {%- endif -%}
+        message: >-
+          {{ states(print_task) }}{%- if not is_state(print_end, "unavailable") %} ({{ ((states(print_end) - states(print_start)).seconds / 3600) | round }}h{{ ((states(print_end) - states(print_start)) / 60) | int % 60 }}m){% endif %}
