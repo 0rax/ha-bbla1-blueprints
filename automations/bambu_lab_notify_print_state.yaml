@@ -124,4 +124,4 @@ actions:
             Print Success
           {%- endif -%}
         message: >-
-          {{ states(print_task) }}{%- if not is_state(print_end, "unavailable") %} ({{{ ((states(print_end) | as_timestamp - states(print_start) | as_timestamp) / 3600) | int }}h{{ (((states(print_end) | as_timestamp - states(print_start) | as_timestamp) | int) % 3600 / 60) | round }}m){% endif %}
+          {{ states(print_task) }}{%- if not is_state(print_end, "unavailable") %} ({{ ((states(print_end) | as_timestamp - states(print_start) | as_timestamp) / 3600) | int }}h{{ (((states(print_end) | as_timestamp - states(print_start) | as_timestamp) | int) % 3600 / 60) | round }}m){% endif %}
